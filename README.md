@@ -23,7 +23,7 @@ func main() {
     client := imprint.NewClient(imprint.Config{
         APIKey:       "imp_live_xxxxxxxxxxxx",
         ServiceName:  "my-service",
-        IngestURL:    "http://localhost:8080/v1/spans",
+        IngestURL:    "https://api.imprint.cloud/v1/spans",
         SamplingRate: 1.0, // Sample all traces (default)
     })
     defer client.Shutdown(context.Background())
@@ -61,7 +61,7 @@ client := imprint.NewClient(imprint.Config{
     ServiceName: "my-service",
 
     // Optional
-    IngestURL:    "http://localhost:8080/v1/spans", // Default
+    IngestURL:    "https://api.imprint.cloud/v1/spans", // Production
     SamplingRate: 0.5,  // Sample 50% of traces (errors always captured)
 
     // Request filtering
@@ -75,7 +75,7 @@ client := imprint.NewClient(imprint.Config{
 |-------|------|---------|-------------|
 | `APIKey` | `string` | - | **Required**. Your project's API key. |
 | `ServiceName` | `string` | - | **Required**. Identifier for this service. |
-| `IngestURL` | `string` | `http://localhost:8080/v1/spans` | Imprint Ingest API URL. |
+| `IngestURL` | `string` | `https://api.imprint.cloud/v1/spans` | Imprint Ingest API URL. |
 | `SamplingRate` | `float64` | `1.0` | Percentage of traces to sample (0.0-1.0). |
 | `IgnorePaths` | `[]string` | `nil` | Exact paths to ignore. |
 | `IgnorePrefixes` | `[]string` | `nil` | Path prefixes to ignore. |

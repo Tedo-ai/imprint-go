@@ -16,7 +16,7 @@ import (
 type Config struct {
 	APIKey      string
 	ServiceName string
-	IngestURL   string // e.g., "http://localhost:8080/v1/spans"
+	IngestURL   string // e.g., "https://api.imprint.cloud/v1/spans"
 
 	// Filter Rules (optional)
 	IgnorePaths      []string // Exact path matches to ignore (e.g., "/health", "/metrics")
@@ -57,7 +57,7 @@ type Client struct {
 // NewClient creates and starts a new Imprint client.
 func NewClient(cfg Config) *Client {
 	if cfg.IngestURL == "" {
-		cfg.IngestURL = "http://localhost:8080/v1/spans"
+		cfg.IngestURL = "https://api.imprint.cloud/v1/spans"
 	}
 
 	// Default sampling rate to 1.0 (sample all) if not set
