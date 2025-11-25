@@ -214,8 +214,8 @@ func (c *tracedConn) CheckNamedValue(nv *driver.NamedValue) error {
 }
 
 func (c *tracedConn) startSpan(ctx context.Context, query string) (context.Context, *imprint.Span) {
-	if c.config.client == nil {
-		// No client configured, return a no-op span
+	if c.config.client == nil || imprint.IsSuppressed(ctx) {
+		// No client configured or tracing suppressed, return a no-op span
 		return ctx, &imprint.Span{}
 	}
 
@@ -292,7 +292,7 @@ func (s *tracedStmt) QueryContext(ctx context.Context, args []driver.NamedValue)
 }
 
 func (s *tracedStmt) startSpan(ctx context.Context) (context.Context, *imprint.Span) {
-	if s.config.client == nil {
+	if s.config.client == nil || imprint.IsSuppressed(ctx) {
 		return ctx, &imprint.Span{}
 	}
 
