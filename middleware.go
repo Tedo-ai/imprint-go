@@ -36,7 +36,7 @@ func (c *Client) Middleware(next http.Handler) http.Handler {
 		}
 
 		// Create new span
-		ctx, span := c.StartSpan(r.Context(), fmt.Sprintf("%s %s", r.Method, r.URL.Path), SpanOptions{Kind: "server"})
+		ctx, span := c.StartSpan(ctx, fmt.Sprintf("%s %s", r.Method, r.URL.Path), SpanOptions{Kind: "server"})
 		defer span.End()
 
 		// Wrap ResponseWriter to capture status code

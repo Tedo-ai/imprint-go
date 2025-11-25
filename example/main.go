@@ -14,7 +14,7 @@ func main() {
 	client := imprint.NewClient(imprint.Config{
 		APIKey:      "imp_live_xxxxxxxxxxxx", // Replace with your API key
 		ServiceName: "demo-app",
-		IngestURL:   "http://localhost:8080/v1/traces",
+		IngestURL:   "http://localhost:8080/v1/spans",
 
 		// Ignore health checks and metrics
 		IgnorePaths: []string{"/health", "/metrics"},

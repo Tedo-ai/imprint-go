@@ -16,12 +16,31 @@ import (
 type Config struct {
 	APIKey      string
 	ServiceName string
-	IngestURL   string // e.g., "http://localhost:8080/v1/traces"
+	IngestURL   string // e.g., "http://localhost:8080/v1/spans"
 
 	// Filter Rules (optional)
 	IgnorePaths      []string // Exact path matches to ignore (e.g., "/health", "/metrics")
 	IgnorePrefixes   []string // Path prefixes to ignore (e.g., "/static/", "/assets/")
 	IgnoreExtensions []string // File extensions to ignore (e.g., ".css", ".js"). Defaults to common static files if nil.
+
+	// Sampling (optional)
+	// SamplingRate controls the percentage of traces to sample (0.0 to 1.0).
+	// Default: 1.0 (sample all). Set to 0.5 to sample ~50% of traces.
+	// Sampling is trace-ID consistent, meaning the same trace ID always gets
+	// the same sampling decision across services.
+	// Note: Spans with errors are always sent (tail-based promotion).
+	SamplingRate float64
+
+	// Metrics (optional)
+	// EnableMetrics starts a background collector for runtime metrics.
+	EnableMetrics bool
+	// MetricsInterval is how often to collect metrics. Default: 60s.
+	MetricsInterval time.Duration
+}
+
+// Sampler determines whether a trace should be sampled.
+type Sampler interface {
+	ShouldSample(traceID string) bool
 }
 
 // Client is the main entry point for the SDK.
@@ -31,12 +50,19 @@ type Client struct {
 	httpClient *http.Client
 	stopChan   chan struct{}
 	wg         sync.WaitGroup
+	sampler    Sampler
+	stopMetrics func() // stops the metrics collector if enabled
 }
 
 // NewClient creates and starts a new Imprint client.
 func NewClient(cfg Config) *Client {
 	if cfg.IngestURL == "" {
-		cfg.IngestURL = "http://localhost:8080/v1/traces"
+		cfg.IngestURL = "http://localhost:8080/v1/spans"
+	}
+
+	// Default sampling rate to 1.0 (sample all) if not set
+	if cfg.SamplingRate == 0 {
+		cfg.SamplingRate = 1.0
 	}
 
 	c := &Client{
@@ -44,12 +70,57 @@ func NewClient(cfg Config) *Client {
 		spanChan:   make(chan *Span, 1000), // Buffer up to 1000 spans
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 		stopChan:   make(chan struct{}),
+		sampler:    newRateSampler(cfg.SamplingRate),
 	}
 
 	c.wg.Add(1)
 	go c.worker()
 
 	return c
+}
+
+// SetSampler allows setting a custom sampler after client creation.
+func (c *Client) SetSampler(s Sampler) {
+	c.sampler = s
+}
+
+// rateSampler is a simple internal sampler for head-based sampling.
+type rateSampler struct {
+	rate      float64
+	threshold uint64
+}
+
+func newRateSampler(rate float64) *rateSampler {
+	if rate <= 0 {
+		return &rateSampler{rate: 0, threshold: 0}
+	}
+	if rate >= 1 {
+		return &rateSampler{rate: 1, threshold: ^uint64(0)}
+	}
+	threshold := uint64(float64(^uint64(0)) * rate)
+	return &rateSampler{rate: rate, threshold: threshold}
+}
+
+func (s *rateSampler) ShouldSample(traceID string) bool {
+	if s.rate >= 1 {
+		return true
+	}
+	if s.rate <= 0 {
+		return false
+	}
+	hash := hashTraceID(traceID)
+	return hash < s.threshold
+}
+
+// hashTraceID creates a consistent hash from a trace ID using FNV-1a.
+func hashTraceID(traceID string) uint64 {
+	// Simple FNV-1a hash
+	var hash uint64 = 14695981039346656037 // FNV offset basis
+	for i := 0; i < len(traceID); i++ {
+		hash ^= uint64(traceID[i])
+		hash *= 1099511628211 // FNV prime
+	}
+	return hash
 }
 
 // SpanOptions holds optional parameters for StartSpan.
@@ -61,15 +132,22 @@ type SpanOptions struct {
 func (c *Client) StartSpan(ctx context.Context, name string, opts ...SpanOptions) (context.Context, *Span) {
 	var parentID *string
 	var traceID string
+	var sampled bool
+	isRoot := false
 
 	// Check for parent span in context
 	if parent := FromContext(ctx); parent != nil {
 		traceID = parent.TraceID
 		pid := parent.SpanID
 		parentID = &pid
+		// Inherit sampling decision from parent
+		sampled = parent.sampled
 	} else {
 		// Start a new trace
 		traceID = generateTraceID()
+		isRoot = true
+		// Make sampling decision for root spans
+		sampled = c.sampler.ShouldSample(traceID)
 	}
 
 	kind := "internal"
@@ -86,6 +164,8 @@ func (c *Client) StartSpan(ctx context.Context, name string, opts ...SpanOptions
 		Kind:      kind,
 		StartTime: time.Now(),
 		client:    c,
+		sampled:   sampled,
+		isRoot:    isRoot,
 	}
 
 	return NewContext(ctx, span), span
@@ -122,11 +202,18 @@ func (c *Client) RecordEvent(ctx context.Context, name string, attributes map[st
 
 	// Set attributes (convert to string values)
 	if attributes != nil {
-		span.Attributes = make(map[string]string, len(attributes))
+		span.Attributes = make(map[string]string, len(attributes)+3)
 		for k, v := range attributes {
 			span.Attributes[k] = fmt.Sprintf("%v", v)
 		}
+	} else {
+		span.Attributes = make(map[string]string, 3)
 	}
+
+	// Inject SDK metadata (OpenTelemetry Semantic Conventions)
+	span.Attributes["telemetry.sdk.name"] = SDKName
+	span.Attributes["telemetry.sdk.version"] = SDKVersion
+	span.Attributes["telemetry.sdk.language"] = SDKLanguage
 
 	// Dispatch immediately
 	select {
@@ -199,7 +286,7 @@ func (c *Client) worker() {
 func (c *Client) sendBatch(spans []*Span) {
 	payload, err := json.Marshal(spans)
 	if err != nil {
-		// fmt.Printf("Error marshaling spans: %v\n", err)
+		fmt.Printf("Error marshaling spans: %v\n", err)
 		return
 	}
 
@@ -213,14 +300,16 @@ func (c *Client) sendBatch(spans []*Span) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		// fmt.Printf("Error sending spans: %v\n", err)
+		fmt.Printf("Error sending spans: %v\n", err)
 		return
 	}
 	defer resp.Body.Close()
 
-	// if resp.StatusCode >= 400 {
-	// 	fmt.Printf("Ingest API returned error: %d\n", resp.StatusCode)
-	// }
+	if resp.StatusCode >= 400 {
+		fmt.Printf("Ingest API returned error: %d\n", resp.StatusCode)
+	} else {
+		fmt.Printf("Successfully sent batch of %d spans\n", len(spans))
+	}
 }
 
 // generateTraceID generates a 16-byte hex string (32 chars)
