@@ -140,6 +140,10 @@ func (c *tracedConn) QueryContext(ctx context.Context, query string, args []driv
 		return nil, driver.ErrSkip
 	}
 
+	if imprint.IsSuppressed(ctx) {
+		return queryer.QueryContext(ctx, query, args)
+	}
+
 	ctx, span := c.startSpan(ctx, query)
 	defer span.End()
 
@@ -158,6 +162,10 @@ func (c *tracedConn) ExecContext(ctx context.Context, query string, args []drive
 		return nil, driver.ErrSkip
 	}
 
+	if imprint.IsSuppressed(ctx) {
+		return execer.ExecContext(ctx, query, args)
+	}
+
 	ctx, span := c.startSpan(ctx, query)
 	defer span.End()
 
@@ -172,6 +180,9 @@ func (c *tracedConn) ExecContext(ctx context.Context, query string, args []drive
 func (c *tracedConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
 	preparer, ok := c.conn.(driver.ConnPrepareContext)
 	if ok {
+		if imprint.IsSuppressed(ctx) {
+			return preparer.PrepareContext(ctx, query)
+		}
 		stmt, err := preparer.PrepareContext(ctx, query)
 		if err != nil {
 			return nil, err
