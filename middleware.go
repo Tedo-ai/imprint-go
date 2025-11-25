@@ -1,7 +1,10 @@
 package imprint
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -93,4 +96,22 @@ type responseRecorder struct {
 func (rw *responseRecorder) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack implements http.Hijacker interface for WebSocket support.
+// This allows the underlying connection to be taken over for protocols
+// that require direct connection access (WebSockets, HTTP/2 server push, etc.)
+func (rw *responseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, errors.New("ResponseWriter does not support hijacking")
+}
+
+// Flush implements http.Flusher interface for streaming support.
+// This is needed for Server-Sent Events (SSE) and other streaming responses.
+func (rw *responseRecorder) Flush() {
+	if flusher, ok := rw.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
