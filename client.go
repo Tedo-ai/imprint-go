@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
@@ -220,6 +221,78 @@ func (c *Client) RecordEvent(ctx context.Context, name string, attributes map[st
 	case c.spanChan <- span:
 	default:
 		// Buffer full, drop event
+	}
+}
+
+// RecordGauge records a gauge metric value (numeric measurement at a point in time).
+// Gauges are used for values that can go up or down, such as:
+// - Memory usage (process.runtime.go.mem.heap_alloc)
+// - CPU percentage
+// - Queue depth
+// - Active connections
+//
+// The value is stored in the "metric.value" attribute, which the dashboard
+// uses to distinguish gauges from counters and render them as line charts.
+//
+// A "service.instance.id" attribute is automatically added using the hostname
+// if not already present, enabling multi-instance aggregation in the dashboard.
+func (c *Client) RecordGauge(ctx context.Context, name string, value float64, attributes map[string]interface{}) {
+	var parentID *string
+	var traceID string
+
+	// Check for parent span in context
+	if parent := FromContext(ctx); parent != nil {
+		traceID = parent.TraceID
+		pid := parent.SpanID
+		parentID = &pid
+	} else {
+		// Start a new trace if no parent
+		traceID = generateTraceID()
+	}
+
+	span := &Span{
+		TraceID:    traceID,
+		SpanID:     generateSpanID(),
+		ParentID:   parentID,
+		Namespace:  c.config.ServiceName,
+		Name:       name,
+		Kind:       "event",
+		StartTime:  time.Now(),
+		DurationNS: 0, // Gauges have 0 duration (instant measurement)
+		client:     c,
+	}
+
+	// Set attributes (convert to string values)
+	if attributes != nil {
+		span.Attributes = make(map[string]string, len(attributes)+5)
+		for k, v := range attributes {
+			span.Attributes[k] = fmt.Sprintf("%v", v)
+		}
+	} else {
+		span.Attributes = make(map[string]string, 5)
+	}
+
+	// Set the gauge value - this is what makes it a gauge vs counter
+	span.Attributes["metric.value"] = fmt.Sprintf("%v", value)
+
+	// Auto-inject service.instance.id (hostname) if not present
+	// This enables multi-instance aggregation in the dashboard
+	if _, ok := span.Attributes["service.instance.id"]; !ok {
+		if hostname, err := os.Hostname(); err == nil {
+			span.Attributes["service.instance.id"] = hostname
+		}
+	}
+
+	// Inject SDK metadata (OpenTelemetry Semantic Conventions)
+	span.Attributes["telemetry.sdk.name"] = SDKName
+	span.Attributes["telemetry.sdk.version"] = SDKVersion
+	span.Attributes["telemetry.sdk.language"] = SDKLanguage
+
+	// Dispatch immediately
+	select {
+	case c.spanChan <- span:
+	default:
+		// Buffer full, drop gauge
 	}
 }
 

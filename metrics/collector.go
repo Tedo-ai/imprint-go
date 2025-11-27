@@ -147,18 +147,16 @@ func (c *Collector) loop() {
 
 func (c *Collector) collect() {
 	ctx := context.Background()
-	attrs := make(map[string]interface{})
 
 	// Collect goroutine count
 	if c.config.CollectGoroutines {
-		goroutines := runtime.NumGoroutine()
-		attrs["process.runtime.go.goroutines"] = goroutines
+		c.client.RecordGauge(ctx, "process.runtime.go.goroutines", float64(runtime.NumGoroutine()), nil)
 	}
 
 	// Collect CPU info
 	if c.config.CollectCPU {
-		attrs["process.runtime.go.num_cpu"] = runtime.NumCPU()
-		attrs["process.runtime.go.gomaxprocs"] = runtime.GOMAXPROCS(0)
+		c.client.RecordGauge(ctx, "process.runtime.go.num_cpu", float64(runtime.NumCPU()), nil)
+		c.client.RecordGauge(ctx, "process.runtime.go.gomaxprocs", float64(runtime.GOMAXPROCS(0)), nil)
 	}
 
 	// Collect memory and GC stats
@@ -167,42 +165,39 @@ func (c *Collector) collect() {
 		runtime.ReadMemStats(&memStats)
 
 		if c.config.CollectMemory {
-			// Heap memory
-			attrs["process.runtime.go.mem.heap_alloc"] = memStats.HeapAlloc
-			attrs["process.runtime.go.mem.heap_sys"] = memStats.HeapSys
-			attrs["process.runtime.go.mem.heap_idle"] = memStats.HeapIdle
-			attrs["process.runtime.go.mem.heap_inuse"] = memStats.HeapInuse
-			attrs["process.runtime.go.mem.heap_released"] = memStats.HeapReleased
-			attrs["process.runtime.go.mem.heap_objects"] = memStats.HeapObjects
+			// Heap memory (in bytes, converted to MB for readability in dashboard)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.heap_alloc", float64(memStats.HeapAlloc), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.heap_sys", float64(memStats.HeapSys), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.heap_idle", float64(memStats.HeapIdle), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.heap_inuse", float64(memStats.HeapInuse), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.heap_released", float64(memStats.HeapReleased), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.heap_objects", float64(memStats.HeapObjects), nil)
 
 			// Stack memory
-			attrs["process.runtime.go.mem.stack_inuse"] = memStats.StackInuse
-			attrs["process.runtime.go.mem.stack_sys"] = memStats.StackSys
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.stack_inuse", float64(memStats.StackInuse), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.stack_sys", float64(memStats.StackSys), nil)
 
 			// Total allocations
-			attrs["process.runtime.go.mem.alloc"] = memStats.Alloc
-			attrs["process.runtime.go.mem.total_alloc"] = memStats.TotalAlloc
-			attrs["process.runtime.go.mem.sys"] = memStats.Sys
-			attrs["process.runtime.go.mem.mallocs"] = memStats.Mallocs
-			attrs["process.runtime.go.mem.frees"] = memStats.Frees
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.alloc", float64(memStats.Alloc), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.total_alloc", float64(memStats.TotalAlloc), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.sys", float64(memStats.Sys), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.mallocs", float64(memStats.Mallocs), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.mem.frees", float64(memStats.Frees), nil)
 		}
 
 		if c.config.CollectGC {
-			attrs["process.runtime.go.gc.count"] = memStats.NumGC
-			attrs["process.runtime.go.gc.pause_total_ns"] = memStats.PauseTotalNs
-			attrs["process.runtime.go.gc.num_forced"] = memStats.NumForcedGC
+			c.client.RecordGauge(ctx, "process.runtime.go.gc.count", float64(memStats.NumGC), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.gc.pause_total_ns", float64(memStats.PauseTotalNs), nil)
+			c.client.RecordGauge(ctx, "process.runtime.go.gc.num_forced", float64(memStats.NumForcedGC), nil)
 
 			// Last GC pause time (if any GCs have occurred)
 			if memStats.NumGC > 0 {
 				// Get the most recent pause time from the circular buffer
 				lastPauseIdx := (memStats.NumGC + 255) % 256
-				attrs["process.runtime.go.gc.last_pause_ns"] = memStats.PauseNs[lastPauseIdx]
+				c.client.RecordGauge(ctx, "process.runtime.go.gc.last_pause_ns", float64(memStats.PauseNs[lastPauseIdx]), nil)
 			}
 		}
 	}
-
-	// Emit as a gauge event (0ms duration span)
-	c.client.RecordEvent(ctx, "runtime.metrics", attrs)
 }
 
 // StartWithClient is a convenience function that creates and starts a collector

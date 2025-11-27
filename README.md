@@ -41,6 +41,7 @@ func main() {
 - [Configuration](#configuration)
 - [HTTP Middleware](#http-middleware)
 - [Manual Instrumentation](#manual-instrumentation)
+- [Gauge Metrics](#gauge-metrics)
 - [Outbound HTTP Tracing](#outbound-http-tracing)
 - [SQL Instrumentation](#sql-instrumentation)
 - [Redis Instrumentation](#redis-instrumentation)
@@ -142,7 +143,7 @@ func processOrder(ctx context.Context, orderID string) error {
 
 ### Recording Events
 
-Events are instant spans (0ms duration) useful for logging and metrics:
+Events are instant spans (0ms duration) useful for logging and business events:
 
 ```go
 client.RecordEvent(ctx, "order_created", map[string]interface{}{
@@ -151,6 +152,28 @@ client.RecordEvent(ctx, "order_created", map[string]interface{}{
     "currency": "USD",
 })
 ```
+
+### Recording Gauge Metrics
+
+Gauges are numeric values that can go up or down over time (memory usage, queue depth, active connections). They appear as **line charts** in the dashboard:
+
+```go
+// Record a gauge metric
+client.RecordGauge(ctx, "queue.depth", float64(len(queue)), map[string]interface{}{
+    "queue_name": "orders",
+})
+
+// Memory usage example
+client.RecordGauge(ctx, "cache.size_bytes", float64(cache.Size()), nil)
+
+// Active connections
+client.RecordGauge(ctx, "db.connections.active", float64(pool.ActiveCount()), nil)
+```
+
+**Key behaviors:**
+- Sets `metric.value` attribute automatically (this is what makes it a gauge vs counter)
+- Auto-injects `service.instance.id` (hostname) for **multi-instance aggregation** in the dashboard
+- Dashboard shows multiple lines when the same metric is emitted from different instances
 
 ### Recording Errors
 
@@ -435,9 +458,52 @@ handler := imprint.RecoveryMiddlewareFunc(yourHandler, func(w http.ResponseWrite
 })
 ```
 
+## Gauge Metrics
+
+Gauges represent numeric values that can go up or down over time. Unlike counters (which track occurrences), gauges track measurements like memory usage, queue depth, or active connections.
+
+### Recording Gauges
+
+```go
+// Record a gauge with optional attributes
+client.RecordGauge(ctx, "queue.depth", float64(queueLen), map[string]interface{}{
+    "queue_name": "orders",
+})
+
+// Simple gauge without extra attributes
+client.RecordGauge(ctx, "cache.hit_rate", 0.85, nil)
+```
+
+### Multi-Instance Aggregation
+
+When you run multiple instances of your service (e.g., multiple pods in Kubernetes), the dashboard automatically shows separate lines for each instance:
+
+```go
+// Each instance automatically gets its hostname as service.instance.id
+client.RecordGauge(ctx, "process.memory.rss", float64(memUsage), nil)
+
+// Override the instance ID if needed
+client.RecordGauge(ctx, "process.memory.rss", float64(memUsage), map[string]interface{}{
+    "service.instance.id": "web-01",
+})
+```
+
+The dashboard displays:
+- **Line chart** with one line per instance
+- **Legend** showing instance names (hostnames)
+- **Tooltip** with formatted values (KB, MB, GB)
+
+### Gauge vs Counter vs Event
+
+| Type | Use Case | Dashboard Display |
+|------|----------|-------------------|
+| `RecordGauge()` | Measurements (memory, CPU, queue depth) | Line chart |
+| `RecordEvent()` | Business events (order created, user login) | Bar chart (count) |
+| Span | Operations with duration | Trace waterfall |
+
 ## Runtime Metrics
 
-Collect Go runtime statistics (memory, goroutines, GC):
+Collect Go runtime statistics (memory, goroutines, GC) automatically:
 
 ```go
 import "github.com/tedo-ai/imprint-go/metrics"
@@ -449,7 +515,6 @@ defer stopMetrics()
 // Or with custom config
 stopMetrics := metrics.StartWithConfig(imprintClient, metrics.Config{
     Interval:          30 * time.Second,
-    Namespace:         "runtime",         // Metric namespace (default: "runtime")
     CollectMemory:     true,
     CollectGoroutines: true,
     CollectGC:         true,
@@ -477,7 +542,7 @@ collector.Stop()
 
 ### Collected Metrics
 
-All metrics are emitted as event spans with these attributes:
+Each metric is emitted as a **gauge** (using `RecordGauge`) and appears as a line chart in the Events page. When running multiple instances, you'll see separate lines for each hostname.
 
 | Metric | Description |
 |--------|-------------|
@@ -494,6 +559,20 @@ All metrics are emitted as event spans with these attributes:
 | `process.runtime.go.gc.count` | Number of GC cycles |
 | `process.runtime.go.gc.pause_total_ns` | Total GC pause time |
 | `process.runtime.go.gc.last_pause_ns` | Last GC pause duration |
+
+### Running Multiple Instances
+
+To see multi-instance aggregation in action:
+
+```bash
+# Terminal 1
+PORT=8000 go run main.go
+
+# Terminal 2
+PORT=8001 go run main.go
+```
+
+After 60 seconds, the Events page will show metrics with two lines (one per instance).
 
 ## WebSocket Instrumentation
 

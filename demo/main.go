@@ -219,8 +219,9 @@ func main() {
 	})
 
 	// Create server
+	port := getEnv("PORT", "8000")
 	server := &http.Server{
-		Addr:    ":8000",
+		Addr:    ":" + port,
 		Handler: handler,
 	}
 
@@ -250,7 +251,7 @@ func main() {
 		}
 	}()
 
-	log.Printf("Starting imprint-demo server on http://localhost:8000")
+	log.Printf("Starting imprint-demo server on http://localhost:%s", port)
 	log.Printf("Using Imprint ingest URL: %s", config.IngestURL)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
