@@ -46,11 +46,13 @@ func main() {
 - [Redis Instrumentation](#redis-instrumentation)
 - [Log Correlation (slog)](#log-correlation-slog)
 - [Context Propagation](#context-propagation)
+- [Tracing Suppression](#tracing-suppression)
 - [Panic Recovery](#panic-recovery)
 - [Runtime Metrics](#runtime-metrics)
 - [WebSocket Instrumentation](#websocket-instrumentation)
 - [Sampling](#sampling)
 - [RUM Integration](#rum-integration)
+- [SDK Metadata](#sdk-metadata)
 
 ## Configuration
 
@@ -79,9 +81,16 @@ client := imprint.NewClient(imprint.Config{
 | `SamplingRate` | `float64` | `1.0` | Percentage of traces to sample (0.0-1.0). |
 | `IgnorePaths` | `[]string` | `nil` | Exact paths to ignore. |
 | `IgnorePrefixes` | `[]string` | `nil` | Path prefixes to ignore. |
-| `IgnoreExtensions` | `[]string` | common static files | File extensions to ignore. |
+| `IgnoreExtensions` | `[]string` | see below | File extensions to ignore. |
 | `EnableMetrics` | `bool` | `false` | Start background runtime metrics collector. |
 | `MetricsInterval` | `time.Duration` | `60s` | Interval for metrics collection. |
+
+**Default Ignored Extensions:**
+
+If `IgnoreExtensions` is not set, these extensions are ignored by default:
+```
+.css, .js, .png, .jpg, .jpeg, .gif, .ico, .svg, .woff, .woff2, .ttf, .eot, .map
+```
 
 ## HTTP Middleware
 
@@ -105,6 +114,8 @@ Features:
 - Captures HTTP method, path, status code
 - Propagates W3C `traceparent` headers
 - Respects ignore rules
+- Supports WebSocket upgrades (`http.Hijacker`)
+- Supports SSE and streaming responses (`http.Flusher`)
 
 ## Manual Instrumentation
 
@@ -185,6 +196,20 @@ Each outbound request creates a span with:
 - `kind: client`
 - `http.method`, `http.url`, `http.status_code`
 - Automatic `traceparent` header injection
+
+### Using Transport Directly
+
+For more control, use the `Transport` struct directly:
+
+```go
+client := &http.Client{
+    Transport: &imprint.Transport{
+        Base:   customTransport,  // Your existing transport (optional)
+        Client: imprintClient,
+    },
+    Timeout: 30 * time.Second,
+}
+```
 
 ## SQL Instrumentation
 
@@ -367,6 +392,28 @@ ctx := imprint.ExtractFromHeaders(headers)
 // With existing context
 ctx := imprint.ExtractFromHeadersWithContext(existingCtx, headers)
 ```
+
+## Tracing Suppression
+
+Temporarily disable tracing for specific operations:
+
+```go
+// Suppress tracing for this context
+ctx = imprint.SuppressTracing(ctx)
+
+// Database queries with this context won't create spans
+db.QueryContext(ctx, "SELECT * FROM internal_metrics")
+
+// Check if tracing is suppressed
+if imprint.IsSuppressed(ctx) {
+    // Tracing is disabled for this context
+}
+```
+
+Use cases:
+- Internal health checks that shouldn't create spans
+- High-frequency internal operations
+- Avoiding trace noise from infrastructure queries
 
 ## Panic Recovery
 
@@ -647,6 +694,18 @@ traceparent := span.TraceParentString()
 | `internal` | Internal operation (default) | Gray |
 | `consumer` | Message/event consumer | Purple |
 | `producer` | Message/event producer | Purple |
+
+## SDK Metadata
+
+All spans automatically include OpenTelemetry semantic convention attributes:
+
+| Attribute | Value |
+|-----------|-------|
+| `telemetry.sdk.name` | `imprint-go` |
+| `telemetry.sdk.version` | `0.1.0` |
+| `telemetry.sdk.language` | `go` |
+
+These attributes help identify which SDK version generated each span, useful for debugging version-specific issues.
 
 ## Complete Example
 
