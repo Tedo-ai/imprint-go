@@ -27,5 +27,7 @@ go.work.sum
 Thumbs.db
 
 # Environment files with secrets
+.env
 .env.local
 .env.*.local
+demo/.env
