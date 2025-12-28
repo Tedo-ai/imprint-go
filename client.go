@@ -46,13 +46,15 @@ type Sampler interface {
 
 // Client is the main entry point for the SDK.
 type Client struct {
-	config     Config
-	spanChan   chan *Span
-	httpClient *http.Client
-	stopChan   chan struct{}
-	wg         sync.WaitGroup
-	sampler    Sampler
-	stopMetrics func() // stops the metrics collector if enabled
+	config        Config
+	spanChan      chan *Span
+	logChan       chan LogEntry
+	httpClient    *http.Client
+	stopChan      chan struct{}
+	wg            sync.WaitGroup
+	sampler       Sampler
+	stopMetrics   func()         // stops the metrics collector if enabled
+	metricsClient *MetricsClient // lazily initialized when metrics methods are used
 }
 
 // NewClient creates and starts a new Imprint client.
@@ -68,14 +70,16 @@ func NewClient(cfg Config) *Client {
 
 	c := &Client{
 		config:     cfg,
-		spanChan:   make(chan *Span, 1000), // Buffer up to 1000 spans
+		spanChan:   make(chan *Span, 1000),     // Buffer up to 1000 spans
+		logChan:    make(chan LogEntry, 1000), // Buffer up to 1000 logs
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 		stopChan:   make(chan struct{}),
 		sampler:    newRateSampler(cfg.SamplingRate),
 	}
 
-	c.wg.Add(1)
+	c.wg.Add(2) // One for spans worker, one for logs worker
 	go c.worker()
+	go c.logWorker()
 
 	return c
 }
@@ -170,6 +174,24 @@ func (c *Client) StartSpan(ctx context.Context, name string, opts ...SpanOptions
 	}
 
 	return NewContext(ctx, span), span
+}
+
+// StartDBSpan is a convenience method for creating database client spans.
+// It automatically sets the span kind to "client" and adds standard db.* attributes.
+// Use this for manual database instrumentation when auto-instrumentation isn't available.
+//
+// Usage:
+//
+//	ctx, span := client.StartDBSpan(ctx, "SELECT users", "postgresql", "SELECT * FROM users WHERE id = $1")
+//	defer span.End()
+//	// ... execute query ...
+func (c *Client) StartDBSpan(ctx context.Context, name, dbSystem, statement string) (context.Context, *Span) {
+	ctx, span := c.StartSpan(ctx, name, SpanOptions{Kind: "client"})
+	span.SetAttribute("db.system", dbSystem)
+	if statement != "" {
+		span.SetAttribute("db.statement", statement)
+	}
+	return ctx, span
 }
 
 // RecordEvent creates an instant span (0ns duration) for logging events, metrics, or markers.
