@@ -862,6 +862,10 @@ func main() {
 }
 ```
 
+## Compatibility
+
+For SDK version compatibility with the Imprint platform, required dependencies, and feature availability by version, see the [Compatibility Matrix](../COMPATIBILITY.md).
+
 ## License
 
 MIT License
