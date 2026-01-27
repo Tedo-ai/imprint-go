@@ -19,8 +19,10 @@ const spanKey contextKey = iota
 
 // Tracer implements pgx.QueryTracer to automatically trace database queries.
 type Tracer struct {
-	client     *imprint.Client
-	recordStmt bool
+	client       *imprint.Client
+	recordStmt   bool
+	maxStmtLen   int
+	sanitizeStmt bool
 }
 
 // Option configures the tracer.
@@ -31,6 +33,25 @@ type Option func(*Tracer)
 func WithRecordStatement(record bool) Option {
 	return func(t *Tracer) {
 		t.recordStmt = record
+	}
+}
+
+// WithMaxStatementLength sets the maximum length of SQL statements to record.
+// Statements longer than this will be truncated with "..." appended.
+// Default is 0 (no limit). Recommended: 2000 for most use cases.
+func WithMaxStatementLength(maxLen int) Option {
+	return func(t *Tracer) {
+		t.maxStmtLen = maxLen
+	}
+}
+
+// WithSanitizeStatement enables sanitization of SQL parameters in recorded statements.
+// When enabled, parameter values are replaced with placeholders to avoid logging
+// sensitive data like passwords, tokens, or PII.
+// Default is false (parameters are recorded as-is).
+func WithSanitizeStatement(sanitize bool) Option {
+	return func(t *Tracer) {
+		t.sanitizeStmt = sanitize
 	}
 }
 
@@ -89,7 +110,14 @@ func (t *Tracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.Trac
 
 	span.SetAttribute("db.system", "postgresql")
 	if t.recordStmt {
-		span.SetAttribute("db.statement", data.SQL)
+		stmt := data.SQL
+		if t.sanitizeStmt {
+			stmt = sanitizeSQL(stmt)
+		}
+		if t.maxStmtLen > 0 && len(stmt) > t.maxStmtLen {
+			stmt = stmt[:t.maxStmtLen] + "..."
+		}
+		span.SetAttribute("db.statement", stmt)
 	}
 
 	return context.WithValue(ctx, spanKey, span)
@@ -188,7 +216,14 @@ func (t *Tracer) TracePrepareStart(ctx context.Context, _ *pgx.Conn, data pgx.Tr
 	span.SetAttribute("db.system", "postgresql")
 	span.SetAttribute("db.operation", "PREPARE")
 	if t.recordStmt {
-		span.SetAttribute("db.statement", data.SQL)
+		stmt := data.SQL
+		if t.sanitizeStmt {
+			stmt = sanitizeSQL(stmt)
+		}
+		if t.maxStmtLen > 0 && len(stmt) > t.maxStmtLen {
+			stmt = stmt[:t.maxStmtLen] + "..."
+		}
+		span.SetAttribute("db.statement", stmt)
 	}
 
 	return context.WithValue(ctx, spanKey, span)
@@ -241,6 +276,24 @@ var (
 	insertPattern = regexp.MustCompile(`(?i)^\s*INSERT\s+INTO\s+["'\x60]?(\w+)["'\x60]?`)
 	updatePattern = regexp.MustCompile(`(?i)^\s*UPDATE\s+["'\x60]?(\w+)["'\x60]?`)
 	deletePattern = regexp.MustCompile(`(?i)^\s*DELETE\s+FROM\s+["'\x60]?(\w+)["'\x60]?`)
+)
+
+// sanitizeSQL replaces parameter values in SQL with placeholders.
+// This is a best-effort sanitization for common SQL patterns.
+func sanitizeSQL(sql string) string {
+	// Replace string literals 'value' with '?'
+	sql = stringLiteralPattern.ReplaceAllString(sql, "'?'")
+	// Replace numeric values that look like parameters
+	sql = numericPattern.ReplaceAllString(sql, "$1?")
+	return sql
+}
+
+// SQL sanitization patterns
+var (
+	// Match string literals: 'anything' including escaped quotes
+	stringLiteralPattern = regexp.MustCompile(`'(?:[^'\\]|\\.)*'`)
+	// Match numeric values after operators or keywords
+	numericPattern = regexp.MustCompile(`(=\s*|,\s*|\(\s*|VALUES\s*\()(\d+\.?\d*)`)
 )
 
 // parseSpanName extracts a meaningful span name from a SQL query.
