@@ -71,7 +71,7 @@ type histogramAggregator struct {
 // NewMetricsClient creates a new metrics client for sending metrics.
 func NewMetricsClient(cfg Config) *MetricsClient {
 	if cfg.IngestURL == "" {
-		cfg.IngestURL = "https://api.imprint.cloud/v1/spans"
+		cfg.IngestURL = "https://ingest.imprint.cloud/v1/spans"
 	}
 
 	mc := &MetricsClient{
